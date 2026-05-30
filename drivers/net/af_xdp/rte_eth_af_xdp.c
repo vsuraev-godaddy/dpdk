@@ -42,6 +42,9 @@
 #include "compat.h"
 #include "eal_filesystem.h"
 
+#include <xdp/libxdp.h>
+#include <bpf/libbpf.h> // Usually needed for nested low-level libbpf options
+
 #ifndef SO_PREFER_BUSY_POLL
 #define SO_PREFER_BUSY_POLL 69
 #endif
@@ -264,7 +267,7 @@ reserve_fill_queue_cp(struct xsk_umem_info *umem, uint16_t reserve_size,
 
 	if (rte_ring_dequeue_bulk(umem->buf_ring, addrs, reserve_size, NULL)
 		    != reserve_size) {
-		AF_XDP_LOG(DEBUG, "Failed to get enough buffers for fq.\n");
+		AF_XDP_LOG(DEBUG, "Failed to get enough buffers for fq. count %d free count %d\n",rte_ring_count(umem->buf_ring), rte_ring_free_count(umem->buf_ring));
 		return -1;
 	}
 
@@ -1585,7 +1588,7 @@ xsk_configure(struct pmd_internals *internals, struct pkt_rx_queue *rxq,
 	struct xsk_socket_config cfg;
 	struct pkt_tx_queue *txq = rxq->pair;
 	int ret = 0;
-	int reserve_size = ETH_AF_XDP_DFLT_NUM_DESCS;
+	int reserve_size = /*ETH_AF_XDP_DFLT_NUM_DESCS*/ring_size/2;
 	struct rte_mbuf *fq_bufs[reserve_size];
 	bool reserve_before;
 
@@ -1598,7 +1601,7 @@ xsk_configure(struct pmd_internals *internals, struct pkt_rx_queue *rxq,
 #if defined(XDP_UMEM_UNALIGNED_CHUNK_FLAG)
 	ret = rte_pktmbuf_alloc_bulk(rxq->umem->mb_pool, fq_bufs, reserve_size);
 	if (ret) {
-		AF_XDP_LOG(DEBUG, "Failed to get enough buffers for fq.\n");
+		AF_XDP_LOG(DEBUG, "Failed to get enough buffers (%d) for fq. %d is available in use %d\n",reserve_size, rte_mempool_avail_count(rxq->umem->mb_pool), rte_mempool_in_use_count(rxq->umem->mb_pool));
 		goto out_umem;
 	}
 #endif
@@ -1632,6 +1635,7 @@ xsk_configure(struct pmd_internals *internals, struct pkt_rx_queue *rxq,
 
 	if (strnlen(internals->prog_path, PATH_MAX)) {
 		if (!internals->custom_prog_configured) {
+#if 0
 			ret = load_custom_xdp_prog(internals->prog_path,
 							internals->if_index,
 							&internals->map);
@@ -1640,6 +1644,20 @@ xsk_configure(struct pmd_internals *internals, struct pkt_rx_queue *rxq,
 						internals->prog_path);
 				goto out_umem;
 			}
+#else
+			DECLARE_LIBBPF_OPTS(xdp_program_opts, xdp_opts,
+					                        .open_filename = internals->prog_path,
+								                );
+			struct xdp_program *prog = xdp_program__create(&xdp_opts);
+			int err = xdp_program__attach(prog, internals->if_index, 0, 0);
+			if (err){
+				char errmsg[1024];
+				libxdp_strerror(err, errmsg, sizeof(errmsg));
+				AF_XDP_LOG(DEBUG, "Couldn't attach XDP program on iface '%s' : %s (%d)\n", internals->prog_path, errmsg, err);
+				return err;
+			}
+			internals->map = bpf_object__find_map_by_name(xdp_program__bpf_obj(prog), "xsks_map");
+#endif
 			internals->custom_prog_configured = 1;
 		}
 		cfg.libbpf_flags |= XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
