@@ -1657,6 +1657,22 @@ xsk_configure(struct pmd_internals *internals, struct pkt_rx_queue *rxq,
 				return err;
 			}
 			internals->map = bpf_object__find_map_by_name(xdp_program__bpf_obj(prog), "xsks_map");
+
+			/* Pin port_to_queue map so that gdnsfilesync can update it
+			 * dynamically as shards and upstream connections are created. */
+			struct bpf_map *ptq_map = bpf_object__find_map_by_name(
+					xdp_program__bpf_obj(prog), "port_to_queue");
+			if (ptq_map) {
+				const char *pin_path = "/sys/fs/bpf/filesync_port_queue";
+				remove(pin_path);
+				if (bpf_map__pin(ptq_map, pin_path) != 0)
+					AF_XDP_LOG(WARNING, "Failed to pin port_to_queue map at %s\n",
+							pin_path);
+				else
+					AF_XDP_LOG(INFO, "Pinned port_to_queue map at %s\n", pin_path);
+			} else {
+				AF_XDP_LOG(WARNING, "port_to_queue map not found in XDP program\n");
+			}
 #endif
 			internals->custom_prog_configured = 1;
 		}
