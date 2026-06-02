@@ -185,6 +185,7 @@ struct pmd_internals {
 	bool force_copy;
 	bool use_cni;
 	struct bpf_map *map;
+	struct xdp_program *xdp_prog;
 
 	struct rte_ether_addr eth_addr;
 
@@ -911,20 +912,17 @@ static int link_xdp_prog_with_dev(int ifindex, int fd, __u32 flags)
 static int
 remove_xdp_program(struct pmd_internals *internals)
 {
-	uint32_t curr_prog_id = 0;
-	int ret;
+	if (!internals->xdp_prog)
+		return 0;
 
-	ret = bpf_xdp_query_id(internals->if_index, XDP_FLAGS_UPDATE_IF_NOEXIST,
-			       &curr_prog_id);
-	if (ret != 0) {
-		AF_XDP_LOG(ERR, "bpf_xdp_query_id failed\n");
-		return ret;
-	}
-
-	ret = bpf_xdp_detach(internals->if_index, XDP_FLAGS_UPDATE_IF_NOEXIST,
-			     NULL);
+	int ret = xdp_program__detach(internals->xdp_prog, internals->if_index,
+				      0, 0);
 	if (ret != 0)
-		AF_XDP_LOG(ERR, "bpf_xdp_detach failed\n");
+		AF_XDP_LOG(ERR, "xdp_program__detach failed: %d\n", ret);
+
+	xdp_program__close(internals->xdp_prog);
+	internals->xdp_prog = NULL;
+	s_port_queue_map_fd = -1;
 	return ret;
 }
 
@@ -1664,8 +1662,10 @@ xsk_configure(struct pmd_internals *internals, struct pkt_rx_queue *rxq,
 				char errmsg[1024];
 				libxdp_strerror(err, errmsg, sizeof(errmsg));
 				AF_XDP_LOG(DEBUG, "Couldn't attach XDP program on iface '%s' : %s (%d)\n", internals->prog_path, errmsg, err);
+				xdp_program__close(prog);
 				return err;
 			}
+			internals->xdp_prog = prog;
 			internals->map = bpf_object__find_map_by_name(xdp_program__bpf_obj(prog), "xsks_map");
 
 			/* Capture the port_to_queue map FD directly so that
