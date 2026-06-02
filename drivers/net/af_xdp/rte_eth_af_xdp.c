@@ -105,6 +105,16 @@ RTE_LOG_REGISTER_DEFAULT(af_xdp_logtype, NOTICE);
 
 static int afxdp_dev_count;
 
+/* FD of the port_to_queue BPF map; set once during XDP program attach.
+ * Exposed via af_xdp_get_port_queue_map_fd() so the application can
+ * call bpf_map_update_elem() directly without relying on a pinned path. */
+static int s_port_queue_map_fd = -1;
+
+int af_xdp_get_port_queue_map_fd(void)
+{
+	return s_port_queue_map_fd;
+}
+
 /* Message header to synchronize fds via IPC */
 struct ipc_hdr {
 	char port_name[RTE_DEV_NAME_MAX_LEN];
@@ -1658,18 +1668,15 @@ xsk_configure(struct pmd_internals *internals, struct pkt_rx_queue *rxq,
 			}
 			internals->map = bpf_object__find_map_by_name(xdp_program__bpf_obj(prog), "xsks_map");
 
-			/* Pin port_to_queue map so that gdnsfilesync can update it
-			 * dynamically as shards and upstream connections are created. */
+			/* Capture the port_to_queue map FD directly so that
+			 * gdnsfilesync can call bpf_map_update_elem() without
+			 * requiring a pinned bpffs path. */
 			struct bpf_map *ptq_map = bpf_object__find_map_by_name(
 					xdp_program__bpf_obj(prog), "port_to_queue");
 			if (ptq_map) {
-				const char *pin_path = "/sys/fs/bpf/filesync_port_queue";
-				remove(pin_path);
-				if (bpf_map__pin(ptq_map, pin_path) != 0)
-					AF_XDP_LOG(WARNING, "Failed to pin port_to_queue map at %s\n",
-							pin_path);
-				else
-					AF_XDP_LOG(INFO, "Pinned port_to_queue map at %s\n", pin_path);
+				s_port_queue_map_fd = bpf_map__fd(ptq_map);
+				AF_XDP_LOG(INFO, "port_to_queue map fd=%d\n",
+						s_port_queue_map_fd);
 			} else {
 				AF_XDP_LOG(WARNING, "port_to_queue map not found in XDP program\n");
 			}
