@@ -1596,7 +1596,7 @@ xsk_configure(struct pmd_internals *internals, struct pkt_rx_queue *rxq,
 	struct xsk_socket_config cfg;
 	struct pkt_tx_queue *txq = rxq->pair;
 	int ret = 0;
-	int reserve_size = /*ETH_AF_XDP_DFLT_NUM_DESCS*/ring_size/2;
+	int reserve_size = ETH_AF_XDP_DFLT_NUM_DESCS;
 	struct rte_mbuf *fq_bufs[reserve_size];
 	bool reserve_before;
 
