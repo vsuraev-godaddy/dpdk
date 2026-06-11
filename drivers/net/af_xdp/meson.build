@@ -17,16 +17,16 @@ if not bpf_dep.found()
 endif
 
 if cc.has_header('linux/if_xdp.h')
-    if xdp_dep.found() and cc.has_header('xdp/xsk.h', dependencies: xdp_dep)
+    if xdp_dep.found() and cc.has_header('xdp/xsk.h')
         cflags += ['-DRTE_NET_AF_XDP_LIBXDP']
         ext_deps += xdp_dep
-        if bpf_dep.found() and cc.has_header('bpf/bpf.h', dependencies: bpf_dep)
+        if bpf_dep.found() and cc.has_header('bpf/bpf.h')
             ext_deps += bpf_dep
         else
             build = false
             reason = 'missing dependency, libbpf'
         endif
-    elif bpf_dep.found() and cc.has_header('bpf/xsk.h', dependencies: bpf_dep) and cc.has_header('bpf/bpf.h', dependencies: bpf_dep)
+    elif bpf_dep.found() and cc.has_header('bpf/xsk.h') and cc.has_header('bpf/bpf.h')
         # libxdp not found. Rely solely on libbpf for xsk functionality
         # which is only available in versions <= v0.6.0.
         bpf_ver_dep = dependency('libbpf', version : '<=0.6.0',
@@ -55,20 +55,18 @@ if build
 #endif
   '''
 
-  xsk_libxdp_flag = ('-DRTE_NET_AF_XDP_LIBXDP' in cflags) ? ['-DRTE_NET_AF_XDP_LIBXDP'] : []
   if cc.has_function('xsk_socket__create_shared', prefix : xsk_check_prefix,
-                     args : xsk_libxdp_flag,
-                     dependencies : ext_deps)
+                     dependencies : ext_deps, args : cflags)
       cflags += ['-DRTE_NET_AF_XDP_SHARED_UMEM']
   endif
   if cc.has_function('bpf_object__next_program',
                      prefix : '#include <bpf/libbpf.h>',
-                     dependencies : bpf_dep)
+                     dependencies : bpf_dep, args : cflags)
       cflags += ['-DRTE_NET_AF_XDP_LIBBPF_OBJ_OPEN']
   endif
   if cc.has_function('bpf_xdp_attach',
                      prefix : '#include <bpf/libbpf.h>',
-                     dependencies : bpf_dep)
+                     dependencies : bpf_dep, args : cflags)
       cflags += ['-DRTE_NET_AF_XDP_LIBBPF_XDP_ATTACH']
   endif
 endif
